@@ -11,6 +11,7 @@ total_votes	= 9
 vine = 10
 verified_purchase = 11
 review_headline = 12
-review_body	review_date = 13
+review_body	13
+review_date = 14
 
 
