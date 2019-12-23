@@ -1,0 +1,16 @@
+marketplace = 0
+customer_id = 1
+review_id = 2
+product_id = 3
+product_parent = 4
+product_title = 5
+product_category = 6
+star_rating = 7
+helpful_votes = 8
+total_votes	= 9
+vine = 10
+verified_purchase = 11
+review_headline = 12
+review_body	review_date = 13
+
+
