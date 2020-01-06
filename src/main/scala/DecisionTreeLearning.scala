@@ -1,6 +1,9 @@
+import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
 
 object DecisionTreeLearning {
+  type Dataset = RDD[Attributes]
+  type AttributeId = Int
 
   /**
    * Case class that represents a review object from the variables that have a predictive value following some criteria
@@ -34,8 +37,9 @@ object DecisionTreeLearning {
     val verifiedPurchase = reviewTokenized(11) == "Y"
     val vine = reviewTokenized(10) == "Y"
     val parsed = Review(reviewTokenized(0), verifiedPurchase, reviewTokenized(7).toInt, vine, reviewTokenized(6), reviewTokenized(13), reviewTokenized(9).toInt, reviewTokenized(8).toInt)
-    parsed
+    return parsed
   }
+
 
   /**
    * Abstract class to define the methods an attribute should have, in this case the possible values
@@ -65,11 +69,34 @@ object DecisionTreeLearning {
     def possibleValues(): Array[Boolean] = Array(true, false)
   }
 
-  class BooleanAttr(val v: Boolean) {
+  class BooleanAttr(val v: Boolean) extends Attribute[Boolean] {
     val value: Boolean = v
 
     def possibleValues(): Array[Boolean] = Array(true, false)
   }
+
+  def extractAttributes(reviews: RDD[Review]): RDD[Attributes] = {
+    return reviews.map((reviews)=>Attributes(
+      new BooleanAttr(reviews.verifiedPurchase),
+      new Rating(reviews.starRating),
+      new BooleanAttr(reviews.vine),
+      reviews.product_category,
+      new ReviewBody(reviews.review_body),
+      new HelpfulReview(reviews.helpfulVotes, reviews.total_votes)
+    ))
+//    val verifiedPurchase = new BooleanAttr(reviews.verifiedPurchase)
+//    val starRating = new Rating(reviews.starRating)
+//    val vine = new BooleanAttr(reviews.vine)
+//    val body = new ReviewBody(reviews.review_body)
+//    val helpfulReview = new HelpfulReview(reviews.helpfulVotes, reviews.total_votes)
+//    val attributes = Attributes(verifiedPurchase, starRating, vine, reviews.product_category, body, helpfulReview)
+//    attributes
+  }
+  def H(data: RDD[Attributes], target: AttributeId): Float = {
+    return null
+
+  }
+
 
   case class Attributes(verifiedPurchase: BooleanAttr,
                         starRating: Rating,
@@ -106,10 +133,14 @@ object DecisionTreeLearning {
       .mapPartitionsWithIndex((idx, iter) => if (idx == 0) iter.drop(1) else iter) // We use this to remove the header of the data set, see if this is the best solution, other option will be to use https://intellipaat.com/community/7382/how-do-i-skip-a-header-from-csv-files-in-spark
       .map(parseReview)
 //      .take(50)
+
+    val e = extractAttributes(mappedData)
+
     println("Print first")
     println(mappedData)
 
-    System.in.read()
+    //    System.in.read()
 
   }
 }
+
