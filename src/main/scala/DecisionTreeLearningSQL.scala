@@ -149,37 +149,37 @@ object DecisionTreeLearningSQL {
   def calculate_info_gain(entropy: Double, joined_df: DataFrame, total_elements: Long): Double = {
     var attr_entropy: Double = 0.0
     joined_df.rdd.collect().foreach(anAttributeData => {
-      var yes_class_count = anAttributeData(1).toString.toLong
-      var no_class_count = anAttributeData(2).toString.toLong
-      if (yes_class_count == null) {
-        yes_class_count = 0
+      var helpful_class_count = anAttributeData(1).toString.toLong
+      var not_helpful_class_count = anAttributeData(2).toString.toLong
+      if (helpful_class_count == null) {
+        helpful_class_count = 0
       }
-      else if (no_class_count == null) {
-        no_class_count = 0
+      else if (not_helpful_class_count == null) {
+        not_helpful_class_count = 0
       }
-      val count_of_class = yes_class_count + no_class_count
-      val classmap = Map("helpful" -> yes_class_count, "not_helpful" -> no_class_count)
-      attr_entropy = attr_entropy + ((count_of_class / total_elements) * calculateEntropy(count_of_class, classmap))
+      val count_of_class = helpful_class_count + not_helpful_class_count
+      val classmap = Map("helpful" -> helpful_class_count, "not_helpful" -> not_helpful_class_count)
+      attr_entropy = attr_entropy + ((count_of_class.toDouble / total_elements.toDouble) * calculateEntropy(count_of_class, classmap))
     })
     val gain: Double = entropy - attr_entropy
     gain
   }
 
   def get_attr_info_gain_data_prep(attr: String, data: DataFrame, entropy: Double, total_elements: Long, where_condition: String): Unit = {
-    var attr_grp_y: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === true).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count") else data.where("is_vote_helpful=true " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count")
-    println("Schema: ", attr)
-    var attr_grp_n: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === false).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count") else data.where("is_vote_helpful=false " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count")
+    val attr_grp_y: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === true).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count") else data.where("is_vote_helpful=true " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count")
+    val attr_grp_n: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === false).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count") else data.where("is_vote_helpful=false " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count")
 //    var joined_df: DataFrame = attr_grp_y.join(attr_grp_n, (col(attr_grp_y.columns(0)) === col(attr_grp_n.columns(0))), "outer")
 //      .withColumn("total", col(attr_grp_y.columns(0)) + col(attr_grp_n.columns(0)))
 //      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
     val joined_df: DataFrame = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()), "outer")
-      .withColumn("total", attr_grp_y("helpful_count") + attr_grp_n("not_helpful_count"))
+//    val sd = joined_df.na.fill("0")
+    val sd = joined_df.na.fill(0,Array[String]("helpful_count","not_helpful_count"))
+    val joined_df_not_n: DataFrame = sd
+      .withColumn("total", sd("helpful_count") + sd("not_helpful_count"))
 //      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
-    joined_df.printSchema()
-    joined_df.show(5)
-    val joinedDF = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()))
-    //    val gain_for_attribute = calculate_info_gain(entropy, joined_df, total_elements)
-    //    attr_name_info_gain(attr) = gain_for_attribute
+//    val joinedDF = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()))
+    val gain_for_attribute = calculate_info_gain(entropy, joined_df_not_n, total_elements)
+    attr_name_info_gain(attr) = gain_for_attribute
     //    attr_name_info_gain.put(attr,gain_for_attribute)
   }
 
@@ -188,10 +188,11 @@ object DecisionTreeLearningSQL {
     val subs_info = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful)
     val entropy = calculateEntropy(total_elements, subs_info)
     println("The entropy is: ", entropy)
-    //    val attrNameInfoGain = Map()
+    attr_name_info_gain = collection.mutable.Map[String, Double]()
+
     val attrs = List("marketplace", "verified_purchase", "star_rating", "vine", "product_category")
     attrs.foreach(attr => {
-      if (!attr.contains(excludedAttrs)) {
+      if (!excludedAttrs.contains(attr)) {
         get_attr_info_gain_data_prep(attr, data, entropy, total_elements, where_condition)
       }
     })
@@ -220,35 +221,37 @@ object DecisionTreeLearningSQL {
   }
 
   def build_tree(max_gain_attr: String, processed_attrs: List[String], data: DataFrame, where_condition: String): Unit = {
-    val attrValues = ss.sql("select distinct " + max_gain_attr + " from dataset  where 1==1 " + where_condition)
+    println("Tree papaya")
+    val attrValues = ss.sql("SELECT distinct " + max_gain_attr + " FROM dataset  where 1==1 " + where_condition)
     var orig_where_condition = where_condition
     attrValues.rdd.collect().foreach(aValueForMaxGainAttr => {
       breakable {
         var leaf_node = ss.emptyDataFrame
         val adistinct_value_for_attr = aValueForMaxGainAttr(0)
         val new_where_condition = orig_where_condition + " and " + max_gain_attr + "=='" + adistinct_value_for_attr + "'"
-        val played_for_attr = ss.sql("select * from dataset where is_vote_helpful==true'" + new_where_condition).count()
+        val played_for_attr = ss.sql("select * from dataset where is_vote_helpful==true" + new_where_condition).count()
         val notplayed_for_attr = ss.sql("select * from dataset where is_vote_helpful==false" + new_where_condition).count()
         //        var leaf_values = List[String]()
         if (played_for_attr == 0 || notplayed_for_attr == 0) {
-          leaf_node = ss.sql("select distinct is_vote_helpful from data where 1==1 " + where_condition)
-          break
+          leaf_node = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + new_where_condition)
+          break //continue
         }
-        process_data_set(processed_attrs, data, played_for_attr, notplayed_for_attr, where_condition)
+        process_data_set(processed_attrs, data, played_for_attr, notplayed_for_attr, new_where_condition)
         if (attr_name_info_gain.isEmpty) {
-          leaf_node = ss.sql("select distinct is_vote_helpful from data where 1==1 " + where_condition)
-          break
+          leaf_node = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + new_where_condition)
+          break //continue
         }
         // get the attr with max info gain under aValueForMaxGainAttr
         // sort by info gain
-        val sorted_by_info_gain = mutable.ListMap(attr_name_info_gain.toSeq.sortBy(_._1): _*)
+        val sorted_by_info_gain = mutable.ListMap(attr_name_info_gain.toSeq.sortBy(_._2): _*)
         var (new_max_gain_attr, new_max_gain_val) = sorted_by_info_gain.head
         if (new_max_gain_val == 0) {
           // under this where condition, records dont have entropy
-          leaf_node = ss.sql("select distinct distinct from data where 1==1 " + where_condition)
+          leaf_node = ss.sql("select is_vote_helpful distinct from dataset where 1==1 " + new_where_condition)
+          break // continue
         }
         val processed_attrs_new = new_max_gain_attr :: processed_attrs // append
-        build_tree(new_max_gain_attr, processed_attrs_new, data, where_condition)
+        build_tree(new_max_gain_attr, processed_attrs_new, data, new_where_condition)
       }
     })
 
@@ -262,7 +265,8 @@ object DecisionTreeLearningSQL {
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-      .csv("./data/smaller.tsv")
+      .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
+//      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "total_votes", "helpful_votes")
     //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
 
@@ -282,12 +286,12 @@ object DecisionTreeLearningSQL {
     val notHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count()
     //    val sorted_by_info_gain = sorted(attr_name_info_gain.items(), key=operator.itemgetter(1), reverse=True)
     process_data_set(List[String](), s, helpful, notHelpful, "")
-    //    val sorted_by_info_gain = mutable.ListMap(attr_name_info_gain.toSeq.sortBy(_._1): _*)
-    //    var processed_attrs = List[String]()
-    //    val (max_gain_attr, max_gain_val) = sorted_by_info_gain.head
-    //    processed_attrs = max_gain_attr :: processed_attrs // append
-    //    var where_cond: String = ""
-    //    build_tree(max_gain_attr, processed_attrs, s, where_cond)
+    val sorted_by_info_gain = mutable.ListMap(attr_name_info_gain.toSeq.sortBy(_._2): _*)
+    var processed_attrs = List[String]()
+    val (max_gain_attr, max_gain_val) = sorted_by_info_gain.head
+    processed_attrs = max_gain_attr :: processed_attrs // append
+    var where_cond: String = ""
+    build_tree(max_gain_attr, processed_attrs, s, where_cond)
 
     println("Finish")
 
