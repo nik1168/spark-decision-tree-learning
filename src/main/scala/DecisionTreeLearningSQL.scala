@@ -5,8 +5,6 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 
 import scala.collection.mutable
 import scala.util.control.Breaks._
-import org.apache.log4j.Logger
-import org.apache.log4j.Level
 
 object DecisionTreeLearningSQL {
   type Dataset = RDD[Attributes]
@@ -15,12 +13,12 @@ object DecisionTreeLearningSQL {
   var attr_name_info_gain: mutable.Map[String, Double] = collection.mutable.Map[String, Double]()
   val conf: SparkConf = new SparkConf()
     .setAppName("Niklaus decision tree") // Application name
-    .setMaster("local[1]") // Acts as a master node with 1 thread
+//    .setMaster("local[1]") // Acts as a master node with 1 thread
 
   val ss: SparkSession = SparkSession.builder().config(conf).getOrCreate()
 
-  Logger.getLogger("org").setLevel(Level.OFF)
-  Logger.getLogger("akka").setLevel(Level.OFF)
+//  Logger.getLogger("org").setLevel(Level.OFF)
+//  Logger.getLogger("akka").setLevel(Level.OFF)
 
   /**
    * Case class that represents a review object from the variables that have a predictive value following some criteria
@@ -265,7 +263,7 @@ object DecisionTreeLearningSQL {
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-      .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
+      .csv("/data/amazon-reduced/")
 //      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "total_votes", "helpful_votes")
     //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
