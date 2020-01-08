@@ -12,7 +12,7 @@ object DecisionTreeLearningSQL {
   val threshold = 0.5
   var attr_name_info_gain: mutable.Map[String, Double] = collection.mutable.Map[String, Double]()
   val conf: SparkConf = new SparkConf()
-    .setAppName("Niklaus decision tree") // Application name
+    .setAppName("NiklausDecisionTree") // Application name
 //    .setMaster("local[1]") // Acts as a master node with 1 thread
 
   val ss: SparkSession = SparkSession.builder().config(conf).getOrCreate()
