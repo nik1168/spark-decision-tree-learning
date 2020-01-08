@@ -275,7 +275,7 @@ object DecisionTreeLearningSQL {
       .drop("total_votes")
       .drop("helpful_votes")
 
-    val s = n_data_frame.na.fill(false).persist()
+    val s = n_data_frame.na.fill(n_data_frame.columns.map(_ -> false).toMap).persist()
 
     s.printSchema()
     s.select("is_vote_helpful").show()
