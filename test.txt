@@ -14,4 +14,8 @@ review_headline = 12
 review_body	13
 review_date = 14
 
+marketplace	customer_id	review_id	product_id	product_parent	product_title	product_category	star_rating	helpful_votes	total_votes	vine	verified_purchase	review_headline	review_body	review_date
+US	45610553	RMDCHWD0Y5OZ9	B00HH62VB6	618218723	AGPtek® 10 Isolated Output 9V 12V 18V Guitar Pedal Board Power Supply Effect Pedals with Isolated Short Cricuit / Overcurrent Protection	Musical Instruments	3	0	1	N	N	Three Stars	Works very good, but induces ALOT of noise.	2015-08-31
+
+
 
