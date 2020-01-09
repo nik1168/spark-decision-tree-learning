@@ -54,15 +54,6 @@ object DecisionTreeLearningSQL {
     val verifiedPurchase: Boolean = reviewTokenized(11) == "Y" // Transform verified purchase into a boolean variable, if the element equals Y then is true, false otherwise
     val vine = reviewTokenized(10) == "Y" // Transform vine into a boolean variable
     val parsed = Review(reviewTokenized(0), verifiedPurchase, reviewTokenized(7).toInt, vine, reviewTokenized(6), reviewTokenized(13), reviewTokenized(9).toInt, reviewTokenized(8).toInt)
-    println("marketplace: ", parsed.marketplace)
-    println("verifiedPurchase: ", parsed.verifiedPurchase)
-    println("starRating: ", parsed.starRating)
-    println("vine: ", parsed.vine)
-    println("product_category: ", parsed.product_category)
-    println("review_body: ", parsed.review_body)
-    println("total_votes: ", parsed.total_votes)
-    println("helpfulVotes: ", parsed.helpfulVotes)
-    println("-------------")
     return parsed
   }
 
@@ -168,16 +159,16 @@ object DecisionTreeLearningSQL {
   def get_attr_info_gain_data_prep(attr: String, data: DataFrame, entropy: Double, total_elements: Long, where_condition: String): Unit = {
     val attr_grp_y: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === true).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count") else data.where("is_vote_helpful=true " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count")
     val attr_grp_n: DataFrame = if (where_condition.length == 0) data.filter(col("is_vote_helpful") === false).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count") else data.where("is_vote_helpful=false " + where_condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count")
-//    var joined_df: DataFrame = attr_grp_y.join(attr_grp_n, (col(attr_grp_y.columns(0)) === col(attr_grp_n.columns(0))), "outer")
-//      .withColumn("total", col(attr_grp_y.columns(0)) + col(attr_grp_n.columns(0)))
-//      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
+    //    var joined_df: DataFrame = attr_grp_y.join(attr_grp_n, (col(attr_grp_y.columns(0)) === col(attr_grp_n.columns(0))), "outer")
+    //      .withColumn("total", col(attr_grp_y.columns(0)) + col(attr_grp_n.columns(0)))
+    //      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
     val joined_df: DataFrame = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()), "outer")
-//    val sd = joined_df.na.fill("0")
-    val sd = joined_df.na.fill(0,Array[String]("helpful_count","not_helpful_count"))
+    //    val sd = joined_df.na.fill("0")
+    val sd = joined_df.na.fill(0, Array[String]("helpful_count", "not_helpful_count"))
     val joined_df_not_n: DataFrame = sd
       .withColumn("total", sd("helpful_count") + sd("not_helpful_count"))
-//      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
-//    val joinedDF = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()))
+    //      .select(attr_grp_y.columns(0), attr_grp_y.columns(1), attr_grp_n.columns(1))
+    //    val joinedDF = attr_grp_y.join(attr_grp_n, Seq(col(attr_grp_y.columns(0)).toString()))
     val gain_for_attribute = calculate_info_gain(entropy, joined_df_not_n, total_elements)
     attr_name_info_gain(attr) = gain_for_attribute
     //    attr_name_info_gain.put(attr,gain_for_attribute)
@@ -187,7 +178,7 @@ object DecisionTreeLearningSQL {
     val total_elements: Long = helpful + notHelpful
     val subs_info = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful)
     val entropy = calculateEntropy(total_elements, subs_info)
-    println("The entropy is: ", entropy)
+    //    println("The entropy is: ", entropy)
     attr_name_info_gain = collection.mutable.Map[String, Double]()
 
     val attrs = List("marketplace", "verified_purchase", "star_rating", "vine", "product_category")
@@ -221,19 +212,27 @@ object DecisionTreeLearningSQL {
   }
 
   def build_tree(max_gain_attr: String, processed_attrs: List[String], data: DataFrame, where_condition: String): Unit = {
-    println("Tree papaya")
+    //    println("Tree papaya")
+    println("Node: ", max_gain_attr)
     val attrValues = ss.sql("SELECT distinct " + max_gain_attr + " FROM dataset  where 1==1 " + where_condition)
     var orig_where_condition = where_condition
     attrValues.rdd.collect().foreach(aValueForMaxGainAttr => {
       breakable {
         var leaf_node = ss.emptyDataFrame
         val adistinct_value_for_attr = aValueForMaxGainAttr(0)
+        // Add edges
+        //        G.add_edges_from([(max_gain_attr, adistinct_value_for_attr)])
+        println("Add edge from " + max_gain_attr + " to " + adistinct_value_for_attr + "")
         val new_where_condition = orig_where_condition + " and " + max_gain_attr + "=='" + adistinct_value_for_attr + "'"
         val played_for_attr = ss.sql("select * from dataset where is_vote_helpful==true" + new_where_condition).count()
         val notplayed_for_attr = ss.sql("select * from dataset where is_vote_helpful==false" + new_where_condition).count()
         //        var leaf_values = List[String]()
         if (played_for_attr == 0 || notplayed_for_attr == 0) {
           leaf_node = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + new_where_condition)
+          leaf_node.rdd.collect().foreach(leaf_node_data => {
+
+            //            G.add_edges_from([(adistinct_value_for_attr, str(leaf_node_data[0]))])
+          })
           break //continue
         }
         process_data_set(processed_attrs, data, played_for_attr, notplayed_for_attr, new_where_condition)
@@ -257,6 +256,8 @@ object DecisionTreeLearningSQL {
 
   }
 
+  case class Tree[+T](value: T, left: Option[Tree[T]], right: Option[Tree[T]])
+
   def main(args: Array[String]): Unit = {
     val attrs = ("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body")
     // SQLContext is a class and is used for initializing the functionalities of Spark SQL
@@ -266,7 +267,7 @@ object DecisionTreeLearningSQL {
       .option("delimiter", "\t")
       .option("header", "true")
       .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
-//      .csv("./data/smaller.tsv")
+      //      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "total_votes", "helpful_votes")
     //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
 
@@ -291,6 +292,8 @@ object DecisionTreeLearningSQL {
     val (max_gain_attr, max_gain_val) = sorted_by_info_gain.head
     processed_attrs = max_gain_attr :: processed_attrs // append
     var where_cond: String = ""
+    println("Root node")
+    println(max_gain_attr)
     build_tree(max_gain_attr, processed_attrs, s, where_cond)
 
     println("Finish")
