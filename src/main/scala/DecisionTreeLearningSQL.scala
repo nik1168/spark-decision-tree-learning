@@ -20,63 +20,88 @@ object DecisionTreeLearningSQL {
   Logger.getLogger("org").setLevel(Level.OFF)
   Logger.getLogger("akka").setLevel(Level.OFF)
 
+  /**
+   * Get the information gain IG(S,A)
+   * @param entropy   : Entropy of parent set
+   * @param dataFrame : Contains the different values that a variable can take and the number of helpful and not helpful votes
+   * @param countTotalElements
+   * @return information gain IG(S,A)
+   */
   def getInformationGain(entropy: Double, dataFrame: DataFrame, countTotalElements: Long): Double = {
-    var attributeEntropy: Double = 0.0
+    var averageWeightedAttributeEntropy: Double = 0.0 // Average weighted entropy
     dataFrame.rdd.collect().foreach(anAttributeData => {
-      var countHelpfulComments = anAttributeData(1).toString.toLong
-      var countNotHelpfulComments = anAttributeData(2).toString.toLong
-      if (countHelpfulComments == null) {
-        countHelpfulComments = 0
-      }
-      else if (countNotHelpfulComments == null) {
-        countNotHelpfulComments = 0
-      }
+      val countHelpfulComments = anAttributeData(1).toString.toLong // Number of helpful reviews of attribute of variable
+      val countNotHelpfulComments = anAttributeData(2).toString.toLong // Number of not helpful reviews of attribute of variable
       val countTotal = countHelpfulComments + countNotHelpfulComments
-      val classmap = Map("helpful" -> countHelpfulComments, "not_helpful" -> countNotHelpfulComments)
-      attributeEntropy = attributeEntropy + ((countTotal.toDouble / countTotalElements.toDouble) * calculateEntropy(countTotal, classmap))
+
+      val classmap = Map("helpful" -> countHelpfulComments, "not_helpful" -> countNotHelpfulComments) // Store counts into a map to be used later
+      averageWeightedAttributeEntropy = averageWeightedAttributeEntropy + ((countTotal.toDouble / countTotalElements.toDouble) * calculateEntropy(countTotal, classmap)) // Average weighted entropy
     })
-    val gain: Double = entropy - attributeEntropy
+    val gain: Double = entropy - averageWeightedAttributeEntropy
     gain
   }
 
-  def getAttributeInformationGain(attr: String, data: DataFrame, entropy: Double, countTotalElements: Long, condition: String): Unit = {
+  /**
+   * Get the information gain of an attribute and fills a "dictionary" with the information gain of that attribute to compute the max gain afterwards
+   * @param attr: Attribute
+   * @param data: Data frame
+   * @param entropy: Parent's entropy
+   * @param countTotalElements: Total elements
+   * @param condition: Condition for where clause
+   */
+  def getAttributesInformationGain(attr: String, data: DataFrame, entropy: Double, countTotalElements: Long, condition: String): Unit = {
     val groupAttributePositive: DataFrame = if (condition.length == 0) data.filter(col("is_vote_helpful") === true).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count") else data.where("is_vote_helpful=true " + condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "helpful_count")
     val groupAttributeNegative: DataFrame = if (condition.length == 0) data.filter(col("is_vote_helpful") === false).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count") else data.where("is_vote_helpful=false " + condition).groupBy(attr).agg(Map("is_vote_helpful" -> "count")).withColumnRenamed("count(is_vote_helpful)", "not_helpful_count")
-    //    var joinedDataFrame: DataFrame = groupAttributePositive.join(groupAttributeNegative, (col(groupAttributePositive.columns(0)) === col(groupAttributeNegative.columns(0))), "outer")
-    //      .withColumn("total", col(groupAttributePositive.columns(0)) + col(groupAttributeNegative.columns(0)))
-    //      .select(groupAttributePositive.columns(0), groupAttributePositive.columns(1), groupAttributeNegative.columns(1))
-    val joinedDataFrame: DataFrame = groupAttributePositive.join(groupAttributeNegative, Seq(col(groupAttributePositive.columns(0)).toString()), "outer")
-    //    val sd = joinedDataFrame.na.fill("0")
-    val sd = joinedDataFrame.na.fill(0, Array[String]("helpful_count", "not_helpful_count"))
+    val joinedDataFrame: DataFrame = groupAttributePositive.join(groupAttributeNegative, Seq(col(groupAttributePositive.columns(0)).toString()), "outer") // Make an outer join of above dataframes to have a single dataframe with the counts of helpful and not helpful reviews
+    val sd = joinedDataFrame.na.fill(0, Array[String]("helpful_count", "not_helpful_count")) // Replace null elements or nan elements with 0, this can happen becuase of the outer join
     val joinedDataFrameFinal: DataFrame = sd
-      .withColumn("total", sd("helpful_count") + sd("not_helpful_count"))
-    //      .select(groupAttributePositive.columns(0), groupAttributePositive.columns(1), groupAttributeNegative.columns(1))
-    //    val joinedDF = groupAttributePositive.join(groupAttributeNegative, Seq(col(groupAttributePositive.columns(0)).toString()))
-    val attributeInformationGain = getInformationGain(entropy, joinedDataFrameFinal, countTotalElements)
-    attributeNameInfoGain(attr) = attributeInformationGain
-    //    attr_name_info_gain.put(attr,attributeInformationGain)
+      .withColumn("total", sd("helpful_count") + sd("not_helpful_count")) // Add another column with the sum of both columns
+    val attributeInformationGain = getInformationGain(entropy, joinedDataFrameFinal, countTotalElements) // Get attribute information gain
+    attributeNameInfoGain(attr) = attributeInformationGain // Add information gain to main dictionary
   }
 
+  /**
+   * Process current set with selected attributes, gets the information gain for each one of them
+   * @param excludedAttrs: Attributes that were already processed
+   * @param data: Dataframe
+   * @param helpful: Number of helpful reviews
+   * @param notHelpful: Number of not helpful reviews
+   * @param condition: condition for where clause
+   */
   def processData(excludedAttrs: List[String], data: DataFrame, helpful: Long, notHelpful: Long, condition: String): Unit = {
-    val countTotalElements: Long = helpful + notHelpful
-    val subsInfo = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful)
-    val entropy = calculateEntropy(countTotalElements, subsInfo)
-    //    println("The entropy is: ", entropy)
-    attributeNameInfoGain = collection.mutable.Map[String, Double]()
+    val countTotalElements: Long = helpful + notHelpful // Total number of elements
+    val subsInfo = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful) // Dictionary with number of helpful and not helpful reviews
+    val entropy = calculateEntropy(countTotalElements, subsInfo) // Entropy of parent set
+    println("Condition: ", condition)
+    println("Set: ")
+    data.printSchema()
+    println("The entropy is: ", entropy)
+    attributeNameInfoGain = collection.mutable.Map[String, Double]() // Declare dictionary to store the info gain of the attributes for the present set
 
-    val attrs = List("marketplace", "verified_purchase", "star_rating", "vine", "product_category")
+    val attrs = List("marketplace", "verified_purchase", "star_rating", "vine", "product_category") // Chosen attributes for feature selection
     attrs.foreach(attr => {
       if (!excludedAttrs.contains(attr)) {
-        getAttributeInformationGain(attr, data, entropy, countTotalElements, condition)
+        getAttributesInformationGain(attr, data, entropy, countTotalElements, condition) // Fill info gain dictionary with each attribute
       }
     })
   }
 
+  /**
+   * Return the log base 2 of a number
+   * @param x: number of type Double
+   * @return log2(number)
+   */
   def log2Val(x: Double): Double = {
     val lnOf2 = scala.math.log(2)
     scala.math.log(x) / lnOf2
   }
 
+  /**
+   * Gets the entropy of a set H(S)
+   * @param countTotalElements: Total number of elements
+   * @param elementsInEachClass: Total number of elements of each class (helpful reviews, not helpful reviews)
+   * @return H(S)
+   */
   def calculateEntropy(countTotalElements: Long, elementsInEachClass: Map[String, Long]): Double = {
     val keysInMap: Set[String] = elementsInEachClass.keySet
     var entropy: Double = 0.0
@@ -149,8 +174,8 @@ object DecisionTreeLearningSQL {
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-      .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
-      //      .csv("./data/smaller.tsv")
+      //      .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
+      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "total_votes", "helpful_votes")
     //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
 
@@ -166,10 +191,10 @@ object DecisionTreeLearningSQL {
 
 
     s.createOrReplaceTempView("dataset")
-    val helpful = ss.sql("SELECT * FROM dataset where is_vote_helpful=true").count()
-    val notHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count()
+    val countHelpful = ss.sql("SELECT * FROM dataset where is_vote_helpful=true").count()
+    val countNotHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count()
     //    val sortedDescInformationGain = sorted(attr_name_info_gain.items(), key=operator.itemgetter(1), reverse=True)
-    processData(List[String](), s, helpful, notHelpful, "")
+    processData(List[String](), s, countHelpful, countNotHelpful, "")
     val sortedDescInformationGain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
     var processedAttributes = List[String]()
     val (maxInformationGainAttribute, maxInformationGainValue) = sortedDescInformationGain.head
