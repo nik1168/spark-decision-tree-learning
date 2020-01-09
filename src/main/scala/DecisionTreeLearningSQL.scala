@@ -57,17 +57,17 @@ object DecisionTreeLearningSQL {
     //    attr_name_info_gain.put(attr,attributeInformationGain)
   }
 
-  def processData(excludedAttrs: List[String], data: DataFrame, helpful: Long, notHelpful: Long, where_condition: String): Unit = {
-    val total_elements: Long = helpful + notHelpful
-    val subs_info = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful)
-    val entropy = calculateEntropy(total_elements, subs_info)
+  def processData(excludedAttrs: List[String], data: DataFrame, helpful: Long, notHelpful: Long, condition: String): Unit = {
+    val countTotalElements: Long = helpful + notHelpful
+    val subsInfo = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful)
+    val entropy = calculateEntropy(countTotalElements, subsInfo)
     //    println("The entropy is: ", entropy)
     attributeNameInfoGain = collection.mutable.Map[String, Double]()
 
     val attrs = List("marketplace", "verified_purchase", "star_rating", "vine", "product_category")
     attrs.foreach(attr => {
       if (!excludedAttrs.contains(attr)) {
-        getAttributeInformationGain(attr, data, entropy, total_elements, where_condition)
+        getAttributeInformationGain(attr, data, entropy, countTotalElements, condition)
       }
     })
   }
@@ -125,15 +125,15 @@ object DecisionTreeLearningSQL {
         }
         // get the attr with max info gain under aValueForMaxGainAttr
         // sort by info gain
-        val sorted_by_info_gain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
-        var (new_max_gain_attr, new_max_gain_val) = sorted_by_info_gain.head
+        val sortedDescInformationGain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
+        var (newMaxInformationGainAttribute, new_max_gain_val) = sortedDescInformationGain.head
         if (new_max_gain_val == 0) {
           // under this where condition, records dont have entropy
           leaf = ss.sql("select is_vote_helpful distinct from dataset where 1==1 " + newCondition)
           break // continue
         }
-        val processed_attrs_new = new_max_gain_attr :: processedAttributes // append
-        ID3(new_max_gain_attr, processed_attrs_new, data, newCondition)
+        val newProcessedAttributes = newMaxInformationGainAttribute :: processedAttributes // append
+        ID3(newMaxInformationGainAttribute, newProcessedAttributes, data, newCondition)
       }
     })
 
