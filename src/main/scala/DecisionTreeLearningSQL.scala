@@ -1,13 +1,18 @@
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.SparkConf
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.functions.{col, udf}
+import org.apache.spark.sql.functions.{col, udf,avg}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.mutable
 import scala.util.control.Breaks._
+import scala.math.pow
 
+/**
+ * Decision tree learning algorithm (ID3) using spark, implementation based on the following blog: https://towardsdatascience.com/machine-learning-decision-tree-using-spark-for-layman-8eca054c8843
+ * The main approach of this implementation is
+ */
 object DecisionTreeLearningSQL {
   type AttributeId = Int
   val threshold = 0.5 // Threshold for the target variable (helpful votes/total votes > threshold)
@@ -238,6 +243,11 @@ object DecisionTreeLearningSQL {
     val mapReviewText = udf((text: String) => {
       text.length.toDouble
     })
+    val mapError = udf((groundTruth: Boolean,predicted:Boolean) => {
+      val gint = if (groundTruth) 1 else 0
+      val pint = if (predicted) 1 else 0
+      pow((gint-pint),2)
+    })
 
     val dataFrame = ss.read
       .option("delimiter", "\t")
@@ -313,7 +323,8 @@ object DecisionTreeLearningSQL {
       StructType(prediction.schema.fields :+ StructField("index", LongType, false))
     )
 
-    val accuracy = df11.join(df22, Seq("index")).drop("index")
+    val error = df11.join(df22, Seq("index")).drop("index").withColumn("error", mapError(col("is_vote_helpful"),col("prediction").cast(BooleanType)))
+    val mse = error.select(avg(col("error"))).show()
     //    val e = xTest.rdd.map(row => finalTree.toString).take(5)
 
     //    val d = xTest.
