@@ -14,7 +14,7 @@ import scala.math.pow
  * The main approach of this implementation is
  */
 object DecisionTreeLearningSQL {
-  type AttributeId = Int
+
   val threshold = 0.5 // Threshold for the target variable (helpful votes/total votes > threshold)
   var attributeNameInfoGain: mutable.Map[String, Double] = collection.mutable.Map[String, Double]() // Global variable that stores the information gain of each variable
   val conf: SparkConf = new SparkConf() // Spark configuration
@@ -37,6 +37,7 @@ object DecisionTreeLearningSQL {
    */
   def getInformationGain(entropy: Double, dataFrame: DataFrame, countTotalElements: Long): Double = {
     var averageWeightedAttributeEntropy: Double = 0.0 // Average weighted entropy
+    // Notice that we are looping over the distinct values of an attribute which can fit into the memory of the main node
     dataFrame.rdd.collect().foreach(anAttributeData => {
       val countHelpfulComments = anAttributeData(1).toString.toLong // Number of helpful reviews of attribute of variable
       val countNotHelpfulComments = anAttributeData(2).toString.toLong // Number of not helpful reviews of attribute of variable
@@ -83,8 +84,6 @@ object DecisionTreeLearningSQL {
     val subsInfo = Map[String, Long]("helpful" -> helpful, "notHelpful" -> notHelpful) // Dictionary with number of helpful and not helpful reviews
     val entropy = calculateEntropy(countTotalElements, subsInfo) // Entropy of parent set
     println("Condition: ", condition)
-    println("Set: ")
-    data.printSchema()
     println("The entropy is: ", entropy)
     attributeNameInfoGain = collection.mutable.Map[String, Double]() // Declare dictionary to store the info gain of the attributes for the present set
     println("Already processed attributes: ", excludedAttrs)
@@ -153,6 +152,7 @@ object DecisionTreeLearningSQL {
         if (helpfulReviewForAttribute == 0 || notHelpfulReviewForAttribute == 0) { // If either one of them is 0, then we have a leaf node, which means that if the path goes through that distinct value then
           leaf = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + newCondition)
           var e: String = ""
+          // Notice that the use of collect here is possible since this is a way smaller version of the data set
           leaf.rdd.collect().foreach(leaf_node_data => {
             println("Leaf found due to either helpful reviews or not helpful reviews number is 0")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data + "")
@@ -169,6 +169,7 @@ object DecisionTreeLearningSQL {
         if (attributeNameInfoGain.isEmpty) {
           var e: String = ""
           leaf = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + newCondition)
+          // Notice that the use of collect here is possible since this is a way smaller version of the data set
           leaf.rdd.collect().foreach(leaf_node_data => {
             println("Leaf found since we processed all attributes")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data(0) + "")
@@ -189,6 +190,7 @@ object DecisionTreeLearningSQL {
           // under this where condition, records dont have entropy
           leaf = ss.sql("select is_vote_helpful distinct from dataset where 1==1 " + newCondition)
           var e: String = ""
+          // Notice that the use of collect here is possible since this is a way smaller version of the data set
           leaf.rdd.collect().foreach(leaf_node_data => {
             println("Leaf found since information gain is 0")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data(0) + "")
