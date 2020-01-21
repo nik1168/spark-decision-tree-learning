@@ -239,11 +239,18 @@ object DecisionTreeLearningSQL {
     println("Here is where the magic begins")
 
     val mapRatings = udf((rating: String) => {
-      val response = if (rating.toLong < 2) "bad" else if (rating.toLong == 3) "regular" else "good"
+      var rateLength:Long = if (rating != null) rating.toLong else 0
+//      println("rating, ", rating)
+      val response = if (rateLength < 2) "bad" else if (rateLength== 3) "regular" else "good"
       response
     })
     val mapReviewText = udf((text: String) => {
-      text.length.toDouble
+//      println("text", text)
+      var response:Double = 0
+      if(text != null){
+        response = text.length.toDouble
+      }
+      response
     })
     val mapError = udf((groundTruth: Boolean,predicted:Boolean) => {
       val gint = if (groundTruth) 1 else 0
@@ -254,8 +261,8 @@ object DecisionTreeLearningSQL {
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-      //      .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
-      .csv("./data/smaller.tsv")
+            .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
+//      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
     //      .withColumn("review_body", mapReviewText(dataFrame("review_body")))
     //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
