@@ -87,7 +87,8 @@ object DecisionTreeLearningSQL {
     println("The entropy is: ", entropy)
     attributeNameInfoGain = collection.mutable.Map[String, Double]() // Declare dictionary to store the info gain of the attributes for the present set
     println("Already processed attributes: ", excludedAttrs)
-    val attrs = List("marketplace", "verified_purchase", "vine", "product_category", "review_body") // Chosen attributes for feature selection
+//    val attrs = List("marketplace", "verified_purchase", "vine", "product_category", "review_body") // Chosen attributes for feature selection
+    val attrs = List("marketplace", "verified_purchase", "vine", "product_category") // Chosen attributes for feature selection
     attrs.foreach(attr => {
       if (!excludedAttrs.contains(attr)) {
         getAttributesInformationGain(attr, data, entropy, countTotalElements, condition) // Fill info gain dictionary with each attribute
@@ -333,7 +334,7 @@ object DecisionTreeLearningSQL {
       //            .csv("/data/amazon-reduced/")
       .csv("./data/")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes") // select is a transformation
-      .persist()
+
 
     /**
      * Use the data frame we read and do operations in the columns (helpful_votes,star_rating,review_body), for instance, map the target variable to a boolean value
@@ -349,67 +350,67 @@ object DecisionTreeLearningSQL {
     /**
      * Replace null or NaN values
      */
-    val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap) // Transformation
+    val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap).persist() // Transformation
 
     /**
      * Split the data set into training and testing using the random split method from a data frame
      * randomSplit is a transformation (https://gerardnico.com/db/spark/rdd/split)
      */
     val sets = fillNaDataFrame.randomSplit(Array[Double](0.7, 0.3), 18)
-    val training = sets(0) // Get training set data frame
+    val training = sets(0).persist() // Get training set data frame
 
     /**
      * Map the lengths of the reviews by assign them to the quantiles they belong
      */
-    val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0)
-    val mapQuantilesTraining = udf((lengthText: Double) => {
-      val response = if (lengthText <= quantilesTraining(0)) "(0,Q1]" else if (lengthText > quantilesTraining(0) && lengthText <= quantilesTraining(1)) "(Q1,Q2]" else if (lengthText > quantilesTraining(1) && lengthText <= quantilesTraining(2)) "(Q2,Q3]" else "Q3"
-      response
-    })
+//    val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0) // This is an action, and every time we call t we have to read from the dataset :P
+//    val mapQuantilesTraining = udf((lengthText: Double) => {
+//      val response = if (lengthText <= quantilesTraining(0)) "(0,Q1]" else if (lengthText > quantilesTraining(0) && lengthText <= quantilesTraining(1)) "(Q1,Q2]" else if (lengthText > quantilesTraining(1) && lengthText <= quantilesTraining(2)) "(Q2,Q3]" else "Q3"
+//      response
+//    })
 
     /**
      * Persist training set since we will use it several times when building the decision tree
      */
-    val trainingSet = training.withColumn("review_body", mapQuantilesTraining(training("review_body"))).persist()
-
-    val test = sets(1) // Get the testing set
+//    val trainingSet = training.withColumn("review_body", mapQuantilesTraining(training("review_body"))).persist()
+//
+    val test = sets(1).persist() // Get the testing set
     /**
      * Map the lengths of the reviews by assign them to the quantiles they belong, the reason we do this separably for the training
      * set and the testing set is that there cannot be any relation between those data sets
      */
-    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0) // action, the result returns a double
-
-    val mapQuantilesTesting = udf((lengthText: Double) => {
-      val response = if (lengthText <= quantilesTesting(0)) "(0,Q1]" else if (lengthText > quantilesTesting(0) && lengthText <= quantilesTesting(1)) "(Q1,Q2]" else if (lengthText > quantilesTesting(1) && lengthText <= quantilesTesting(2)) "(Q2,Q3]" else "Q3"
-      response
-    })
+//    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0) // action, the result returns a double
+//
+//    val mapQuantilesTesting = udf((lengthText: Double) => {
+//      val response = if (lengthText <= quantilesTesting(0)) "(0,Q1]" else if (lengthText > quantilesTesting(0) && lengthText <= quantilesTesting(1)) "(Q1,Q2]" else if (lengthText > quantilesTesting(1) && lengthText <= quantilesTesting(2)) "(Q2,Q3]" else "Q3"
+//      response
+//    })
 
     /**
      * Persist training set since we will use it for the prediction
      */
-    val testingSet = test.withColumn("review_body", mapQuantilesTesting(training("review_body"))).persist()
+//    val testingSet = test.withColumn("review_body", mapQuantilesTesting(training("review_body"))).persist()
 
     /**
      * Print schema of training set for debuggingg purposes
      */
-    trainingSet.printSchema()
-    trainingSet.select("is_vote_helpful").show()
+    training.printSchema()
+    training.select("is_vote_helpful").show()
 
     /**
      * Create temporary view in order to make queries
      */
-    trainingSet.createOrReplaceTempView("dataset")
+    training.createOrReplaceTempView("dataset")
 
     /**
      * Get number of helpful and not helpful reviews
      */
-    val countHelpful = ss.sql("SELECT * FROM dataset where is_vote_helpful=true").count()
-    val countNotHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count()
+    val countHelpful = ss.sql("SELECT * FROM dataset where is_vote_helpful=true").count() // action that trigger the transformations
+    val countNotHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count() // action that trigger the transformations
 
     /**
      * Process the training set to get a "dictionary" of all the variables chosen along with their information gain
      */
-    processData(List[String](), trainingSet, countHelpful, countNotHelpful, "")
+    processData(List[String](), training, countHelpful, countNotHelpful, "")
 
     /**
      * Sort dictionaryy by information gain
@@ -447,18 +448,18 @@ object DecisionTreeLearningSQL {
     /**
      * Build decision tree in a recursive way
      */
-    ID3(maxInformationGainAttribute, processedAttributes, trainingSet, initialCondition, finalTree)
+    ID3(maxInformationGainAttribute, processedAttributes, training, initialCondition, finalTree)
     println("FINISH BUILDING TREE")
 
     /**
      * Get testing set and ground truth for getting the error in the predictions
      */
-    val xTest = testingSet.select("marketplace", "verified_purchase", "vine", "product_category", "review_body")
-    val yTest = testingSet.select("is_vote_helpful")
-
-    /**
-     * Get predictions
-     */
+    val xTest = test.select("marketplace", "verified_purchase", "vine", "product_category", "review_body")
+    val yTest = test.select("is_vote_helpful")
+//
+//    /**
+//     * Get predictions
+//     */
     val prediction = predict(xTest, finalTree)
     //    val df11 = ss.sqlContext.createDataFrame(
     //      yTest.rdd.zipWithIndex.map {
