@@ -34,7 +34,7 @@ assemblyMergeStrategy in assembly := {
 /* including scala bloats your assembly jar unnecessarily, and may interfere with
    spark runtime */
 assemblyOption in assembly := (assemblyOption in assembly).value.copy(includeScala = false)
-assemblyJarName in assembly := "niklausDecisionLearning.jar"
+assemblyJarName in assembly := "niklausDecisionLearningReducedT2.jar"
 
 /* you need to be able to undo the "provided" annotation on the deps when running your spark
    programs locally i.e. from sbt; this bit reincludes the full classpaths in the compile and run tasks. */

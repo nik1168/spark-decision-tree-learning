@@ -1,17 +1,17 @@
 import org.apache.log4j.{Level, Logger}
 import org.apache.spark.SparkConf
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.functions.{col, udf,avg}
+import org.apache.spark.sql.functions.{col, udf}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 import scala.collection.mutable
-import scala.util.control.Breaks._
 import scala.math.pow
+import scala.util.control.Breaks._
 
 /**
  * Decision tree learning algorithm (ID3) using spark, implementation based on the following blog: https://towardsdatascience.com/machine-learning-decision-tree-using-spark-for-layman-8eca054c8843
- * The main approach of this implementation is
+ * The main approach of this implementation is to use SPARK SQL. We construct a tree from top to bottom by using a recursive function
  */
 object DecisionTreeLearningSQL {
 
@@ -23,7 +23,7 @@ object DecisionTreeLearningSQL {
 
   val ss: SparkSession = SparkSession.builder().config(conf).getOrCreate() // Spark session to use data frames and Spark SQL
 
-  // Disable information logs, for debugging purposes
+  //   Disable information logs, for debugging purposes
   Logger.getLogger("org").setLevel(Level.OFF)
   Logger.getLogger("akka").setLevel(Level.OFF)
 
@@ -41,7 +41,7 @@ object DecisionTreeLearningSQL {
     dataFrame.rdd.collect().foreach(anAttributeData => {
       val countHelpfulComments = anAttributeData(1).toString.toLong // Number of helpful reviews of attribute of variable
       val countNotHelpfulComments = anAttributeData(2).toString.toLong // Number of not helpful reviews of attribute of variable
-      val countTotal = countHelpfulComments + countNotHelpfulComments
+      val countTotal = countHelpfulComments + countNotHelpfulComments // Total number of helpful comments
 
       val classmap = Map("helpful" -> countHelpfulComments, "not_helpful" -> countNotHelpfulComments) // Store counts into a map to be used later
       averageWeightedAttributeEntropy = averageWeightedAttributeEntropy + ((countTotal.toDouble / countTotalElements.toDouble) * calculateEntropy(countTotal, classmap)) // Average weighted entropy
@@ -131,25 +131,73 @@ object DecisionTreeLearningSQL {
     entropy
   }
 
+  /**
+   * Builds the decision tree, the main idea is to use SPARK SQL to split the dataset, this is a recursive method,
+   *
+   * @param attributeMaxInfoGain : Attribute that has the maximum information gain, it will be the root of the tree or sub tree
+   * @param processedAttributes  : List of attributes that were already processed
+   * @param data                 : Part of the data set to be processed
+   * @param condition            : Current condition for SPARK SQL queries, we use this to split the data set according to the tree built by the algorithm
+   * @param tree                 : Decision tree. In this case we construct the tree from top to bottom.
+   */
   def ID3(attributeMaxInfoGain: String, processedAttributes: List[String], data: DataFrame, condition: String, tree: TreeDecision): Unit = {
-    //    println("Tree papaya")
-    println("Node: ", attributeMaxInfoGain)
-    val attrValues = ss.sql("SELECT distinct " + attributeMaxInfoGain + " FROM dataset  where 1==1 " + condition) // Select distinct values of the root node
-    var originCondition = condition // Store original condition to aggregate with following conditions
-    // Get each one of the different values the attribute can take
+
+    println("Node: ", attributeMaxInfoGain) // We print the Attribute that has the maximum information gain for debugging purposes
+
+    /**
+     * Select distinct values of the root node (attribute that has the maximum amount of information gain)
+     */
+    val attrValues = ss.sql("SELECT distinct " + attributeMaxInfoGain + " FROM dataset  where 1==1 " + condition)
+
+    /**
+     * Store original condition to aggregate with following conditions
+     */
+    val originCondition = condition
+
+    /**
+     * Get each one of the different values the attribute can take (E.g Blue,Red,Yellow.
+     * Notice that the distinct values that a variable can take can fit into the driver node)
+     */
     attrValues.rdd.collect().foreach(aValueForMaxGainAttr => {
       breakable {
-        var leaf = ss.emptyDataFrame // used for storing a leaf node
-        val adistinctValueForAttribute = aValueForMaxGainAttr(0) // value of distinct value
-        // Add edges
-        //        G.add_edges_from([(max_gain_attr, adistinctValueForAttribute)])
+        /**
+         * used for storing a leaf node
+         */
+        var leaf = ss.emptyDataFrame
+
+        /**
+         * Distinct value (E.g Blue)
+         */
+        val adistinctValueForAttribute = aValueForMaxGainAttr(0)
+
+        /**
+         * Init a child decision tree
+         */
         val children: TreeDecision = new TreeDecision("", "", List[TreeDecision]())
+
         println("Add edge from " + attributeMaxInfoGain + " to " + adistinctValueForAttribute + "")
-        val newCondition = originCondition + " and " + attributeMaxInfoGain + "=='" + adistinctValueForAttribute + "'" // Split the set, get all the values from the distinct value of the attribute
-        val helpfulReviewForAttribute = ss.sql("select * from dataset where is_vote_helpful==true" + newCondition).count() // Helpful reviews of split set
-        val notHelpfulReviewForAttribute = ss.sql("select * from dataset where is_vote_helpful==false" + newCondition).count() // Not helpful reviews of split data set
-        //        var leaf_values = List[String]()
-        if (helpfulReviewForAttribute == 0 || notHelpfulReviewForAttribute == 0) { // If either one of them is 0, then we have a leaf node, which means that if the path goes through that distinct value then
+        /**
+         * Split the set, get all the values from the distinct value of the attribute
+         */
+        val newCondition = originCondition + " and " + attributeMaxInfoGain + "=='" + adistinctValueForAttribute + "'"
+
+        /**
+         * Helpful reviews of split set
+         */
+        val helpfulReviewForAttribute = ss.sql("select * from dataset where is_vote_helpful==true" + newCondition).count()
+
+        /**
+         * Not helpful reviews of split data set
+         */
+        val notHelpfulReviewForAttribute = ss.sql("select * from dataset where is_vote_helpful==false" + newCondition).count()
+
+        /**
+         * If either one of them is 0, then we have a leaf node.
+         */
+        if (helpfulReviewForAttribute == 0 || notHelpfulReviewForAttribute == 0) {
+          /**
+           * Get the distinct values for the leaf, in this case it will only be one (This can also fit in main driver memory)
+           */
           leaf = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + newCondition)
           var e: String = ""
           // Notice that the use of collect here is possible since this is a way smaller version of the data set
@@ -157,15 +205,25 @@ object DecisionTreeLearningSQL {
             println("Leaf found due to either helpful reviews or not helpful reviews number is 0")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data + "")
             e = leaf_node_data(0).toString
-            // G.add_edges_from([(adistinctValueForAttribute, str(leaf_node_data[0]))])
           })
-          children.value1 = adistinctValueForAttribute.toString
-          children.value2 = e
+
+          /**
+           * Add values of children and append to the list of children of the current node
+           */
+          children.parentValue = adistinctValueForAttribute.toString
+          children.nodeValue = e
           tree.children = children :: tree.children
           println("-----------------------")
           break //continue
         }
+        /**
+         * Process the training set to get a "dictionary" of all the variables chosen along with their information gain
+         */
         processData(processedAttributes, data, helpfulReviewForAttribute, notHelpfulReviewForAttribute, newCondition)
+
+        /**
+         * We have processed all variables
+         */
         if (attributeNameInfoGain.isEmpty) {
           var e: String = ""
           leaf = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + newCondition)
@@ -174,39 +232,43 @@ object DecisionTreeLearningSQL {
             println("Leaf found since we processed all attributes")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data(0) + "")
             e = leaf_node_data(0).toString
-            // G.add_edges_from([(adistinctValueForAttribute, str(leaf_node_data[0]))])
           })
           println("-----------------------")
-          children.value1 = adistinctValueForAttribute.toString
-          children.value2 = e
+          children.parentValue = adistinctValueForAttribute.toString
+          children.nodeValue = e
           tree.children = children :: tree.children
           break //continue
         }
-        // get the attr with max info gain under aValueForMaxGainAttr
-        // sort by info gain
+
+        /**
+         * Get the attr with max info gain under aValueForMaxGainAttr
+         * Sort by information gain
+         */
         val sortedDescInformationGain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
         val (newMaxInformationGainAttribute, new_max_gain_val) = sortedDescInformationGain.head
         if (new_max_gain_val == 0) {
-          // under this where condition, records dont have entropy
+          // under this where condition, records don't have entropy
           leaf = ss.sql("select is_vote_helpful distinct from dataset where 1==1 " + newCondition)
           var e: String = ""
           // Notice that the use of collect here is possible since this is a way smaller version of the data set
-          leaf.rdd.collect().foreach(leaf_node_data => {
-            println("Leaf found since information gain is 0")
-            println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data(0) + "")
-            e = leaf_node_data(0).toString
+          breakable {
+            leaf.rdd.collect().foreach(leaf_node_data => {
+              println("Leaf found since information gain is 0")
+              println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data(0) + "")
+              e = leaf_node_data(0).toString
+              break;
+            })
+          }
 
-            // G.add_edges_from([(adistinctValueForAttribute, str(leaf_node_data[0]))])
-          })
           println("-----------------------")
-          children.value1 = adistinctValueForAttribute.toString
-          children.value2 = e
+          children.parentValue = adistinctValueForAttribute.toString
+          children.nodeValue = e
           tree.children = children :: tree.children
           break // continue
         }
         println("Add edge from " + adistinctValueForAttribute + " to " + newMaxInformationGainAttribute + "")
-        children.value1 = adistinctValueForAttribute.toString
-        children.value2 = newMaxInformationGainAttribute
+        children.parentValue = adistinctValueForAttribute.toString
+        children.nodeValue = newMaxInformationGainAttribute
         tree.children = children :: tree.children
         val newProcessedAttributes = newMaxInformationGainAttribute :: processedAttributes // append
         println("-----------------------")
@@ -216,157 +278,252 @@ object DecisionTreeLearningSQL {
 
   }
 
-  case class Tree[+T](value: T, left: Option[Tree[T]], right: Option[Tree[T]])
+  /**
+   * Decision tree class, we use this data structure to build the tree from top to bottom.
+   *
+   * @param parentValue : Value of the parent node (Notice that the parent node can take distinct values, eg. the attribute color can take the values, red, blue or red)
+   * @param nodeValue   : It is just the attribute name
+   * @param children    : Array of children nodes which are also trees, notice that a leaf node is a tree with no children.
+   */
+  class TreeDecision(var parentValue: String, var nodeValue: String = "", var children: List[TreeDecision]) extends java.io.Serializable {
 
-  class Node() {
-    var value1: String = ""
-    var value2: String = ""
-    var next: Node = null
   }
 
-  class TreeDecision(var value1: String, var value2: String = "", var children: List[TreeDecision]) extends java.io.Serializable {
-
-  }
-
-  def parseReview(review: Row, tree: Long): String = {
-    println(review)
-    return review.toString()
-  }
 
   def main(args: Array[String]): Unit = {
-    val attrs = ("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body")
+
     // SQLContext is a class and is used for initializing the functionalities of Spark SQL
     println("Here is where the magic begins")
 
+    /**
+     * Function that maps the ratings to a categorical variable (bad, regular and good)
+     */
     val mapRatings = udf((rating: String) => {
-      var rateLength:Long = if (rating != null) rating.toLong else 0
-//      println("rating, ", rating)
-      val response = if (rateLength < 2) "bad" else if (rateLength== 3) "regular" else "good"
+      val rateLength: Long = if (rating != null) rating.toLong else 0
+      val response = if (rateLength < 2) "bad" else if (rateLength == 3) "regular" else "good"
       response
     })
+
+    /**
+     * Function that maps a review to a number (The length of the review)
+     */
     val mapReviewText = udf((text: String) => {
-//      println("text", text)
-      var response:Double = 0
-      if(text != null){
+      var response: Double = 0
+      if (text != null) {
         response = text.length.toDouble
       }
       response
     })
-    val mapError = udf((groundTruth: Boolean,predicted:Boolean) => {
+
+    /**
+     * Function that maps a a boolean value to a numerical value to compute the error of the predictions
+     */
+    val mapError = udf((groundTruth: Boolean, predicted: Boolean) => {
       val gint = if (groundTruth) 1 else 0
       val pint = if (predicted) 1 else 0
-      pow((gint-pint),2)
+      pow((gint - pint), 2)
     })
 
+    /**
+     * Read the data set using the spark session variable declared above and select the variables chosen for building the decision tree
+     */
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-            .csv("./data/amazon_reviews_us_Musical_Instruments_v1_00.tsv")
-//      .csv("./data/smaller.tsv")
-      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
-    //      .withColumn("review_body", mapReviewText(dataFrame("review_body")))
-    //      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes")
+      //            .csv("/data/amazon-reduced/")
+      .csv("./data/")
+      .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes") // select is a transformation
+      .persist()
 
-    val n_data_frame = dataFrame
-      .withColumn("is_vote_helpful", (dataFrame("helpful_votes") / dataFrame("total_votes")) > threshold)
-      .withColumn("star_rating", mapRatings(dataFrame("star_rating")))
-      .withColumn("review_body", mapReviewText(dataFrame("review_body")).cast(DoubleType))
+    /**
+     * Use the data frame we read and do operations in the columns (helpful_votes,star_rating,review_body), for instance, map the target variable to a boolean value
+     * We also drop the "total_votes" and "helpful_votes" columns from the data frame since we will no longer use them
+     */
+    val mappedDataFrame = dataFrame
+      .withColumn("is_vote_helpful", (dataFrame("helpful_votes") / dataFrame("total_votes")) > threshold) // map (transformations)
+      .withColumn("star_rating", mapRatings(dataFrame("star_rating"))) //map (transformations)
+      .withColumn("review_body", mapReviewText(dataFrame("review_body")).cast(DoubleType)) //map (transformations)
       .drop("total_votes")
       .drop("helpful_votes")
-    //      .drop("star_rating")
 
-    val s = n_data_frame.na.fill(n_data_frame.columns.map(_ -> false).toMap)
+    /**
+     * Replace null or NaN values
+     */
+    val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap) // Transformation
 
-    val sets = s.randomSplit(Array[Double](0.7, 0.3), 18)
-    val training = sets(0)
+    /**
+     * Split the data set into training and testing using the random split method from a data frame
+     * randomSplit is a transformation (https://gerardnico.com/db/spark/rdd/split)
+     */
+    val sets = fillNaDataFrame.randomSplit(Array[Double](0.7, 0.3), 18)
+    val training = sets(0) // Get training set data frame
+
+    /**
+     * Map the lengths of the reviews by assign them to the quantiles they belong
+     */
     val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0)
     val mapQuantilesTraining = udf((lengthText: Double) => {
       val response = if (lengthText <= quantilesTraining(0)) "(0,Q1]" else if (lengthText > quantilesTraining(0) && lengthText <= quantilesTraining(1)) "(Q1,Q2]" else if (lengthText > quantilesTraining(1) && lengthText <= quantilesTraining(2)) "(Q2,Q3]" else "Q3"
       response
     })
+
+    /**
+     * Persist training set since we will use it several times when building the decision tree
+     */
     val trainingSet = training.withColumn("review_body", mapQuantilesTraining(training("review_body"))).persist()
 
-    val test = sets(1)
-    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0)
+    val test = sets(1) // Get the testing set
+    /**
+     * Map the lengths of the reviews by assign them to the quantiles they belong, the reason we do this separably for the training
+     * set and the testing set is that there cannot be any relation between those data sets
+     */
+    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0) // action, the result returns a double
+
     val mapQuantilesTesting = udf((lengthText: Double) => {
       val response = if (lengthText <= quantilesTesting(0)) "(0,Q1]" else if (lengthText > quantilesTesting(0) && lengthText <= quantilesTesting(1)) "(Q1,Q2]" else if (lengthText > quantilesTesting(1) && lengthText <= quantilesTesting(2)) "(Q2,Q3]" else "Q3"
       response
     })
+
+    /**
+     * Persist training set since we will use it for the prediction
+     */
     val testingSet = test.withColumn("review_body", mapQuantilesTesting(training("review_body"))).persist()
 
+    /**
+     * Print schema of training set for debuggingg purposes
+     */
     trainingSet.printSchema()
     trainingSet.select("is_vote_helpful").show()
 
-
+    /**
+     * Create temporary view in order to make queries
+     */
     trainingSet.createOrReplaceTempView("dataset")
+
+    /**
+     * Get number of helpful and not helpful reviews
+     */
     val countHelpful = ss.sql("SELECT * FROM dataset where is_vote_helpful=true").count()
     val countNotHelpful = ss.sql("SELECT * FROM dataset WHERE is_vote_helpful=false").count()
-    //    val sortedDescInformationGain = sorted(attr_name_info_gain.items(), key=operator.itemgetter(1), reverse=True)
+
+    /**
+     * Process the training set to get a "dictionary" of all the variables chosen along with their information gain
+     */
     processData(List[String](), trainingSet, countHelpful, countNotHelpful, "")
+
+    /**
+     * Sort dictionaryy by information gain
+     */
     val sortedDescInformationGain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
+
+    /**
+     * Declare list of processed attributes, empty at first
+     */
     var processedAttributes = List[String]()
+
+    /**
+     * Get attribute with max information gain which will be the root node
+     */
     val (maxInformationGainAttribute, maxInformationGainValue) = sortedDescInformationGain.head
+
+    /**
+     * Add root node to processed attributes
+     */
     processedAttributes = maxInformationGainAttribute :: processedAttributes // append
+
+    /**
+     * Add initial condition string, empty at first
+     */
     var initialCondition: String = ""
+
     println("Root node")
     println(maxInformationGainAttribute)
+
+    /**
+     * Init final decision tree with variable with maximum information gain at first
+     */
     val finalTree: TreeDecision = new TreeDecision("", maxInformationGainAttribute, List[TreeDecision]())
+
+    /**
+     * Build decision tree in a recursive way
+     */
     ID3(maxInformationGainAttribute, processedAttributes, trainingSet, initialCondition, finalTree)
+    println("FINISH BUILDING TREE")
+
+    /**
+     * Get testing set and ground truth for getting the error in the predictions
+     */
     val xTest = testingSet.select("marketplace", "verified_purchase", "vine", "product_category", "review_body")
     val yTest = testingSet.select("is_vote_helpful")
+
+    /**
+     * Get predictions
+     */
     val prediction = predict(xTest, finalTree)
-    val df11 = ss.sqlContext.createDataFrame(
-      yTest.rdd.zipWithIndex.map {
-        case (row, index) => Row.fromSeq(row.toSeq :+ index)
-      },
-      // Create schema for index column
-      StructType(yTest.schema.fields :+ StructField("index", LongType, false))
-    )
-
-
-    val df22 = ss.sqlContext.createDataFrame(
-      prediction.rdd.zipWithIndex.map {
-        case (row, index) => Row.fromSeq(row.toSeq :+ index)
-      },
-      // Create schema for index column
-      StructType(prediction.schema.fields :+ StructField("index", LongType, false))
-    )
-
-    val error = df11.join(df22, Seq("index")).drop("index").withColumn("error", mapError(col("is_vote_helpful"),col("prediction").cast(BooleanType)))
-    val mse = error.select(avg(col("error"))).show()
-    //    val e = xTest.rdd.map(row => finalTree.toString).take(5)
-
-    //    val d = xTest.
-
+    //    val df11 = ss.sqlContext.createDataFrame(
+    //      yTest.rdd.zipWithIndex.map {
+    //        case (row, index) => Row.fromSeq(row.toSeq :+ index)
+    //      },
+    //      // Create schema for index column
+    //      StructType(yTest.schema.fields :+ StructField("index", LongType, false))
+    //    )
+    //
+    //
+    //    val df22 = ss.sqlContext.createDataFrame(
+    //      prediction.rdd.zipWithIndex.map {
+    //        case (row, index) => Row.fromSeq(row.toSeq :+ index)
+    //      },
+    //      // Create schema for index column
+    //      StructType(prediction.schema.fields :+ StructField("index", LongType, false))
+    //    )
+    //
+    //    val error = df11.join(df22, Seq("index")).drop("index").withColumn("error", mapError(col("is_vote_helpful"),col("prediction").cast(BooleanType)))
+    //    val mse = error.select(avg(col("error"))).show()
+    //    //    val e = xTest.rdd.map(row => finalTree.toString).take(5)
+    //
+    //    //    val d = xTest.
+    //
     println("Finish")
 
     //    System.in.read()
 
   }
 
+  /**
+   * Get prediction, traverse the final decision tree until finding a leaf
+   * @param row
+   * @param tree
+   * @return
+   */
   def getPrediction(row: Row, tree: TreeDecision): Row = {
     var copyTree: TreeDecision = tree
     val mapAttr: mutable.Map[String, Long] = collection.mutable.Map[String, Long]("marketplace" -> 0, "verified_purchase" -> 1, "vine" -> 2, "product_category" -> 3, "review_body" -> 4)
     while (copyTree.children.nonEmpty) { // If we didn't find a leaf node
-      breakable{
-        copyTree.children.foreach((child:TreeDecision)=>{
-          if (row(mapAttr(copyTree.value2).toInt) == child.value1){
+      breakable {
+        copyTree.children.foreach((child: TreeDecision) => {
+          if (row(mapAttr(copyTree.nodeValue).toInt) == child.parentValue) {
             copyTree = child
             break
           }
         })
       }
     }
-    return Row(copyTree.value2)
+    return Row(copyTree.nodeValue)
   }
 
+  /**
+   * Predict each element of the validation set
+   * @param dataframe
+   * @param trees
+   * @return
+   */
   def predict(dataframe: DataFrame, trees: TreeDecision) = {
 
-    val e:RDD[Row] = dataframe.rdd.map(row => getPrediction(row, trees))
+    val e: RDD[Row] = dataframe.rdd.map(row => getPrediction(row, trees))
     val schema = new StructType()
       .add(StructField("prediction", StringType, true))
 
-    val dfWithSchema = ss.createDataFrame(e,schema)
+    val dfWithSchema = ss.createDataFrame(e, schema)
     dfWithSchema
   }
 
