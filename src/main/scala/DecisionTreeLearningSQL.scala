@@ -333,7 +333,7 @@ object DecisionTreeLearningSQL {
       //            .csv("/data/amazon-reduced/")
       .csv("./data/")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes") // select is a transformation
-      .persist()
+
 
     /**
      * Use the data frame we read and do operations in the columns (helpful_votes,star_rating,review_body), for instance, map the target variable to a boolean value
@@ -349,7 +349,7 @@ object DecisionTreeLearningSQL {
     /**
      * Replace null or NaN values
      */
-    val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap) // Transformation
+    val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap).persist() // Transformation
 
     /**
      * Split the data set into training and testing using the random split method from a data frame
@@ -361,7 +361,7 @@ object DecisionTreeLearningSQL {
     /**
      * Map the lengths of the reviews by assign them to the quantiles they belong
      */
-    val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0)
+    val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0.3) // action that triggers the transformations, they should be persisted otherwise for each action
     val mapQuantilesTraining = udf((lengthText: Double) => {
       val response = if (lengthText <= quantilesTraining(0)) "(0,Q1]" else if (lengthText > quantilesTraining(0) && lengthText <= quantilesTraining(1)) "(Q1,Q2]" else if (lengthText > quantilesTraining(1) && lengthText <= quantilesTraining(2)) "(Q2,Q3]" else "Q3"
       response
@@ -377,7 +377,7 @@ object DecisionTreeLearningSQL {
      * Map the lengths of the reviews by assign them to the quantiles they belong, the reason we do this separably for the training
      * set and the testing set is that there cannot be any relation between those data sets
      */
-    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0) // action, the result returns a double
+    val quantilesTesting = test.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0.3) // action, the result returns a double
 
     val mapQuantilesTesting = udf((lengthText: Double) => {
       val response = if (lengthText <= quantilesTesting(0)) "(0,Q1]" else if (lengthText > quantilesTesting(0) && lengthText <= quantilesTesting(1)) "(Q1,Q2]" else if (lengthText > quantilesTesting(1) && lengthText <= quantilesTesting(2)) "(Q2,Q3]" else "Q3"
