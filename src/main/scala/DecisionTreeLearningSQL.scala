@@ -216,6 +216,7 @@ object DecisionTreeLearningSQL {
           println("-----------------------")
           break //continue
         }
+
         /**
          * Process the training set to get a "dictionary" of all the variables chosen along with their information gain
          */
@@ -331,7 +332,7 @@ object DecisionTreeLearningSQL {
       .option("delimiter", "\t")
       .option("header", "true")
       //            .csv("/data/amazon-reduced/")
-      .csv("./data/")
+      .csv("./data/smaller.tsv")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes") // select is a transformation
 
 
@@ -359,7 +360,7 @@ object DecisionTreeLearningSQL {
     val training = sets(0) // Get training set data frame
 
     /**
-     * Map the lengths of the reviews by assign them to the quantiles they belong
+     * Map the lengths of the reviews by assign them to the quartiles they belong
      */
     val quantilesTraining = training.stat.approxQuantile("review_body", Array(0.25, 0.5, 0.75), 0.3) // action that triggers the transformations, they should be persisted otherwise for each action
     val mapQuantilesTraining = udf((lengthText: Double) => {
@@ -373,6 +374,7 @@ object DecisionTreeLearningSQL {
     val trainingSet = training.withColumn("review_body", mapQuantilesTraining(training("review_body"))).persist()
 
     val test = sets(1) // Get the testing set
+
     /**
      * Map the lengths of the reviews by assign them to the quantiles they belong, the reason we do this separably for the training
      * set and the testing set is that there cannot be any relation between those data sets
@@ -412,7 +414,7 @@ object DecisionTreeLearningSQL {
     processData(List[String](), trainingSet, countHelpful, countNotHelpful, "")
 
     /**
-     * Sort dictionaryy by information gain
+     * Sort dictionary by information gain
      */
     val sortedDescInformationGain = mutable.ListMap(attributeNameInfoGain.toSeq.sortBy(_._2): _*)
 
@@ -456,33 +458,41 @@ object DecisionTreeLearningSQL {
     val xTest = testingSet.select("marketplace", "verified_purchase", "vine", "product_category", "review_body")
     val yTest = testingSet.select("is_vote_helpful")
 
+    println("Init predictions")
+
     /**
      * Get predictions
      */
     val prediction = predict(xTest, finalTree)
-    //    val df11 = ss.sqlContext.createDataFrame(
-    //      yTest.rdd.zipWithIndex.map {
-    //        case (row, index) => Row.fromSeq(row.toSeq :+ index)
-    //      },
-    //      // Create schema for index column
-    //      StructType(yTest.schema.fields :+ StructField("index", LongType, false))
-    //    )
-    //
-    //
-    //    val df22 = ss.sqlContext.createDataFrame(
-    //      prediction.rdd.zipWithIndex.map {
-    //        case (row, index) => Row.fromSeq(row.toSeq :+ index)
-    //      },
-    //      // Create schema for index column
-    //      StructType(prediction.schema.fields :+ StructField("index", LongType, false))
-    //    )
-    //
-    //    val error = df11.join(df22, Seq("index")).drop("index").withColumn("error", mapError(col("is_vote_helpful"),col("prediction").cast(BooleanType)))
-    //    val mse = error.select(avg(col("error"))).show()
-    //    //    val e = xTest.rdd.map(row => finalTree.toString).take(5)
-    //
-    //    //    val d = xTest.
-    //
+    val df11 = ss.sqlContext.createDataFrame(
+      yTest.rdd.zipWithIndex.map {
+        case (row, index) => Row.fromSeq(row.toSeq :+ index)
+      },
+      // Create schema for index column
+      StructType(yTest.schema.fields :+ StructField("index", LongType, false))
+    )
+    println("Finish predictions")
+    println("Predictions")
+    prediction.show()
+    println("Ground truth")
+    yTest.show()
+
+    // Compute the mean square error
+
+//    val df22 = ss.sqlContext.createDataFrame(
+//      prediction.rdd.zipWithIndex.map {
+//        case (row, index) => Row.fromSeq(row.toSeq :+ index)
+//      },
+//      // Create schema for index column
+//      StructType(prediction.schema.fields :+ StructField("index", LongType, false))
+//    )
+//    //
+//    val error = df11.join(df22, Seq("index")).drop("index").withColumn("error", mapError(col("is_vote_helpful"), col("prediction").cast(BooleanType)))
+//    val mse = error.select(avg(col("error"))).show()
+//    val e = xTest.rdd.map(row => finalTree.toString).take(5)
+
+    //    val d = xTest.
+
     println("Finish")
 
     //    System.in.read()
@@ -491,6 +501,7 @@ object DecisionTreeLearningSQL {
 
   /**
    * Get prediction, traverse the final decision tree until finding a leaf
+   *
    * @param row
    * @param tree
    * @return
@@ -513,6 +524,7 @@ object DecisionTreeLearningSQL {
 
   /**
    * Predict each element of the validation set
+   *
    * @param dataframe
    * @param trees
    * @return
