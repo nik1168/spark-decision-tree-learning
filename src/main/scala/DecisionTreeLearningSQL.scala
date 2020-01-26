@@ -201,7 +201,7 @@ object DecisionTreeLearningSQL {
            */
           leaf = ss.sql("select distinct is_vote_helpful from dataset where 1==1 " + newCondition)
           var e: String = ""
-          // Notice that the use of collect here is possible since this is a way smaller version of the data set
+          // Notice that the use of collect here is possible since this is a way smaller version of the data set, in this case it will only be one value
           leaf.rdd.collect().foreach(leaf_node_data => {
             println("Leaf found due to either helpful reviews or not helpful reviews number is 0")
             println("Add edge from " + attributeMaxInfoGain + " to " + leaf_node_data + "")
