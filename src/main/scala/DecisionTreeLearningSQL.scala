@@ -290,6 +290,7 @@ object DecisionTreeLearningSQL {
 
   }
 
+  def isAllDigits(x: String): Boolean = {x forall Character.isDigit}
 
   def main(args: Array[String]): Unit = {
 
@@ -300,7 +301,8 @@ object DecisionTreeLearningSQL {
      * Function that maps the ratings to a categorical variable (bad, regular and good)
      */
     val mapRatings = udf((rating: String) => {
-      val rateLength: Long = if (rating != null) rating.toLong else 0
+      println("Map rating, ", rating)
+      val rateLength: Long = if (rating != null) if(rating forall Character.isDigit) rating.toLong else 0 else 0
       val response = if (rateLength < 2) "bad" else if (rateLength == 3) "regular" else "good"
       response
     })
@@ -309,6 +311,7 @@ object DecisionTreeLearningSQL {
      * Function that maps a review to a number (The length of the review)
      */
     val mapReviewText = udf((text: String) => {
+      println("Map review text, ", text)
       var response: Double = 0
       if (text != null) {
         response = text.length.toDouble
@@ -331,18 +334,18 @@ object DecisionTreeLearningSQL {
     val dataFrame = ss.read
       .option("delimiter", "\t")
       .option("header", "true")
-      //            .csv("/data/amazon-reduced/")
-      .csv("./data/")
+                  .csv("./data/")
+//      .csv("/data/amazon/")
       .select("marketplace", "verified_purchase", "star_rating", "vine", "product_category", "review_body", "total_votes", "helpful_votes") // select is a transformation
 
-
+    println("Begin mapping")
     /**
      * Use the data frame we read and do operations in the columns (helpful_votes,star_rating,review_body), for instance, map the target variable to a boolean value
      * We also drop the "total_votes" and "helpful_votes" columns from the data frame since we will no longer use them
      */
     val mappedDataFrame = dataFrame
       .withColumn("is_vote_helpful", (dataFrame("helpful_votes") / dataFrame("total_votes")) > threshold) // map (transformations)
-      .withColumn("star_rating", mapRatings(dataFrame("star_rating"))) //map (transformations)
+      .withColumn("star_rating", mapRatings(dataFrame("star_rating")).cast(LongType)) //map (transformations)
       .withColumn("review_body", mapReviewText(dataFrame("review_body")).cast(DoubleType)) //map (transformations)
       .drop("total_votes")
       .drop("helpful_votes")
@@ -351,6 +354,8 @@ object DecisionTreeLearningSQL {
      * Replace null or NaN values
      */
     val fillNaDataFrame = mappedDataFrame.na.fill(mappedDataFrame.columns.map(_ -> false).toMap).persist() // Transformation
+
+    println("End mapping")
 
     /**
      * Split the data set into training and testing using the random split method from a data frame
@@ -401,6 +406,7 @@ object DecisionTreeLearningSQL {
      */
     training.createOrReplaceTempView("dataset")
 
+    println("Begin count")
     /**
      * Get number of helpful and not helpful reviews
      */
@@ -518,7 +524,7 @@ object DecisionTreeLearningSQL {
    * @param trees
    * @return
    */
-  def predict(dataframe: DataFrame, trees: TreeDecision) = {
+  def predict(dataframe: DataFrame, trees: TreeDecision): DataFrame = {
 
     val e: RDD[Row] = dataframe.rdd.map(row => getPrediction(row, trees))
     val schema = new StructType()
